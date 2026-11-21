@@ -40,20 +40,8 @@ jobs:
         id: ver
         shell: bash
         run: |
-          V=$(python3 - <<'PY'
-import re
-t=open('src/AppScope/app.json5',encoding='utf-8').read()
-m=re.search(r'versionName\s*:\s*["\']([^"\']+)',t)
-print(m.group(1) if m else '')
-PY
-)
-          C=$(python3 - <<'PY'
-import re
-t=open('src/AppScope/app.json5',encoding='utf-8').read()
-m=re.search(r'versionCode\s*:\s*(\d+)',t)
-print(m.group(1) if m else '')
-PY
-)
+          V=$(grep -m1 -oE '"versionName"[[:space:]]*:[[:space:]]*"[^"]+"' src/AppScope/app.json5 | cut -d'"' -f4)
+          C=$(grep -oE '"versionCode"[[:space:]]*:[[:space:]]*[0-9]+' src/AppScope/app.json5 | head -1 | grep -oE '[0-9]+$')
           echo "name=$V" >> "$GITHUB_OUTPUT"
           echo "code=$C" >> "$GITHUB_OUTPUT"
 
