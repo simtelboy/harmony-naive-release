@@ -29,3 +29,4 @@ private repository's secrets.
 
 Each run builds a signed HAP and publishes a release named
 `harmony-<versionName>-<versionCode>` for direct `hdc install`.
+
