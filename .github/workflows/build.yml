@@ -14,11 +14,12 @@ concurrency:
 
 jobs:
   build:
-    # HarmonyOS HAP builds need the DevEco SDK, which GitHub-hosted runners do
-    # not provide. Register this PC as a self-hosted runner with the labels
-    # `harmony` (plus the default self-hosted/Windows/X64 labels).
-    runs-on: [self-hosted, Windows, X64, harmony]
-    timeout-minutes: 120
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      # Community HarmonyOS CI image built on the OpenHarmony command-line
+      # tools for API 24 (6.1.1), the same image the private repo uses.
+      image: ghcr.io/dalongzhuazi/harmonyos-ci:api24
     steps:
       - name: Check out private source
         uses: actions/checkout@v4
@@ -27,33 +28,90 @@ jobs:
           token: ${{ secrets.PRIVATE_REPO_TOKEN }}
           path: src
 
+      - name: Prepare CI workspace
+        working-directory: src
+        run: |
+          set -eu
+          python3 .github/scripts/strip_signing.py build-profile.json5
+          python3 .github/scripts/prepare_ci.py .
+          grep -n 'hvigor-ohos-plugin' hvigor/hvigor-config.json5 || true
+
       - name: Read app version
         id: ver
         shell: bash
         run: |
-          V=$(node -e "const fs=require('fs');const t=fs.readFileSync('src/AppScope/app.json5','utf8');const m=t.match(/versionName\s*:\s*[\"']([^\"']+)/);console.log(m[1])")
-          C=$(node -e "const fs=require('fs');const t=fs.readFileSync('src/AppScope/app.json5','utf8');const m=t.match(/versionCode\s*:\s*(\d+)/);console.log(m[1])")
+          V=$(python3 - <<'PY'
+import re
+t=open('src/AppScope/app.json5',encoding='utf-8').read()
+m=re.search(r'versionName\s*:\s*["\']([^"\']+)',t)
+print(m.group(1) if m else '')
+PY
+)
+          C=$(python3 - <<'PY'
+import re
+t=open('src/AppScope/app.json5',encoding='utf-8').read()
+m=re.search(r'versionCode\s*:\s*(\d+)',t)
+print(m.group(1) if m else '')
+PY
+)
           echo "name=$V" >> "$GITHUB_OUTPUT"
           echo "code=$C" >> "$GITHUB_OUTPUT"
 
-      - name: Build and sign HAP
-        shell: bash
+      - name: Install dependencies
+        working-directory: src
+        run: ohpm install --all
+
+      - name: Build HAP
+        working-directory: src
+        run: |
+          set -eu
+          hvigorw assembleHap --mode module -p product=default -p buildMode=release --no-daemon --stacktrace
+          mkdir -p dist
+          find . -type f -name '*.hap' -path '*/outputs/*' -not -path './oh_modules/*' -exec cp -v {} dist/ \;
+          test -n "$(find dist -type f -name '*.hap' -print -quit)"
+
+      - name: Sign HAP
         working-directory: src
         env:
-          DEVECO_SDK_HOME: 'C:\Program Files\Huawei\DevEco Studio\sdk'
-          SIGN_P12_PASS: ${{ secrets.SIGN_P12_PASS }}
+          CERT_B64: ${{ secrets.SIGNING_CERT }}
+          PROFILE_B64: ${{ secrets.SIGNING_PROFILE }}
+          KEY_B64: ${{ secrets.SIGNING_KEY }}
+          KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          KEYSTORE_PWD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PWD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          export PATH="/c/Program Files/Huawei/DevEco Studio/jbr/bin:$PATH"
-          bash scripts/build-and-sign.sh
+          set -eu
+          for v in CERT_B64 PROFILE_B64 KEY_B64 KEY_ALIAS KEYSTORE_PWD KEY_PWD; do
+            eval "test -n \"\${$v:-}\"" || { echo "::error::missing signing secret $v"; exit 1; }
+          done
+          mkdir -p /tmp/materials
+          printf '%s' "$CERT_B64"    | base64 -d > /tmp/materials/cert.cer
+          printf '%s' "$PROFILE_B64" | base64 -d > /tmp/materials/profile.p7b
+          printf '%s' "$KEY_B64"     | base64 -d > /tmp/materials/key.p12
+          SIGN_TOOL=/opt/command-line-tools/sdk/default/openharmony/toolchains/lib/hap-sign-tool.jar
+          test -f "$SIGN_TOOL"
+          shopt -s nullglob
+          for hap in dist/*.hap; do
+            base="$(basename "$hap" .hap)"
+            java -jar "$SIGN_TOOL" sign-app \
+              -keyAlias "$KEY_ALIAS" -signAlg SHA256withECDSA -mode localSign \
+              -appCertFile /tmp/materials/cert.cer \
+              -profileFile /tmp/materials/profile.p7b \
+              -inFile "$hap" \
+              -keystoreFile /tmp/materials/key.p12 \
+              -outFile "dist/${base}-signed.hap" \
+              -keyPwd "$KEY_PWD" -keystorePwd "$KEYSTORE_PWD" -signCode "1"
+          done
+          rm -rf /tmp/materials
+          test -n "$(find dist -name '*-signed.hap' -print -quit)"
 
       - name: Publish release
-        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.ver.outputs.name }}
           CODE: ${{ steps.ver.outputs.code }}
         run: |
-          HAP=$(ls -t src/dist/*signed.hap | head -1)
+          HAP=$(ls -t src/dist/*-signed.hap | head -1)
           gh release create "harmony-${VERSION}-${CODE}" "$HAP" \
             --title "Atlantis Harmony ${VERSION} (${CODE})" \
             --notes "Built from simtelboy/harmony-naive. Signed HAP for direct hdc installation."

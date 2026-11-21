@@ -3,26 +3,27 @@
 CI only; the HAP source stays in the private repository
 `simtelboy/harmony-naive` and is checked out at build time.
 
+It uses the community HarmonyOS CI container
+`ghcr.io/dalongzhuazi/harmonyos-ci:api24`, which contains the OpenHarmony
+command-line tools for API 24 (6.1.1) — the same image the private repo's own
+workflow uses. GitHub-hosted runners do not ship the HarmonyOS SDK, so the
+container is what makes an Actions-only build possible.
+
 ## Required secrets
 
 | Secret | Value |
 |---|---|
 | `PRIVATE_REPO_TOKEN` | Fine-grained PAT, **Contents: Read-only** on `simtelboy/harmony-naive` only |
-| `SIGN_P12_PASS` | Password of the signing keystore used by `scripts/build-and-sign.sh` |
+| `SIGNING_CERT` | base64 of the `.cer` |
+| `SIGNING_PROFILE` | base64 of the `.p7b` |
+| `SIGNING_KEY` | base64 of the `.p12` |
+| `SIGNING_KEY_ALIAS` | keystore alias |
+| `KEYSTORE_PASSWORD` | keystore password |
+| `KEY_PASSWORD` | key password |
 
-## Self-hosted runner
-
-A HarmonyOS HAP needs the DevEco SDK, which GitHub-hosted runners do not have.
-Register this PC as a self-hosted runner (Settings → Actions → Runners → New
-self-hosted runner) and give it the extra label `harmony`:
-
-```bash
-./config.cmd --url https://github.com/simtelboy/harmony-naive-release --token <runner-token> --labels harmony
-./run.cmd
-```
-
-Install it as a Windows service so the daily schedule works while logged out.
-Signing materials are picked up from `C:\Worker\AGC通用证书` by the build script.
+The same signing values are already used by the private repo's `Build HAP`
+workflow; copy them here so the public builder can sign without access to the
+private repository's secrets.
 
 ## Output
 
