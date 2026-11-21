@@ -1,0 +1,59 @@
+name: Build Atlantis Harmony
+
+on:
+  schedule:
+    - cron: '41 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: harmony-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # HarmonyOS HAP builds need the DevEco SDK, which GitHub-hosted runners do
+    # not provide. Register this PC as a self-hosted runner with the labels
+    # `harmony` (plus the default self-hosted/Windows/X64 labels).
+    runs-on: [self-hosted, Windows, X64, harmony]
+    timeout-minutes: 120
+    steps:
+      - name: Check out private source
+        uses: actions/checkout@v4
+        with:
+          repository: simtelboy/harmony-naive
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          path: src
+
+      - name: Read app version
+        id: ver
+        shell: bash
+        run: |
+          V=$(node -e "const fs=require('fs');const t=fs.readFileSync('src/AppScope/app.json5','utf8');const m=t.match(/versionName\s*:\s*[\"']([^\"']+)/);console.log(m[1])")
+          C=$(node -e "const fs=require('fs');const t=fs.readFileSync('src/AppScope/app.json5','utf8');const m=t.match(/versionCode\s*:\s*(\d+)/);console.log(m[1])")
+          echo "name=$V" >> "$GITHUB_OUTPUT"
+          echo "code=$C" >> "$GITHUB_OUTPUT"
+
+      - name: Build and sign HAP
+        shell: bash
+        working-directory: src
+        env:
+          DEVECO_SDK_HOME: 'C:\Program Files\Huawei\DevEco Studio\sdk'
+          SIGN_P12_PASS: ${{ secrets.SIGN_P12_PASS }}
+        run: |
+          export PATH="/c/Program Files/Huawei/DevEco Studio/jbr/bin:$PATH"
+          bash scripts/build-and-sign.sh
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.name }}
+          CODE: ${{ steps.ver.outputs.code }}
+        run: |
+          HAP=$(ls -t src/dist/*signed.hap | head -1)
+          gh release create "harmony-${VERSION}-${CODE}" "$HAP" \
+            --title "Atlantis Harmony ${VERSION} (${CODE})" \
+            --notes "Built from simtelboy/harmony-naive. Signed HAP for direct hdc installation."
