@@ -60,6 +60,7 @@ jobs:
 
       - name: Sign HAP
         working-directory: src
+        shell: bash
         env:
           CERT_B64: ${{ secrets.SIGNING_CERT }}
           PROFILE_B64: ${{ secrets.SIGNING_PROFILE }}
