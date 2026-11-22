@@ -28,6 +28,11 @@ jobs:
           token: ${{ secrets.PRIVATE_REPO_TOKEN }}
           path: src
 
+      - name: Check out release tooling
+        uses: actions/checkout@v4
+        with:
+          path: ci
+
       - name: Prepare CI workspace
         working-directory: src
         run: |
@@ -95,12 +100,12 @@ jobs:
           test -n "$(find dist -name '*-signed.hap' -print -quit)"
 
       - name: Publish release
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.ver.outputs.name }}
           CODE: ${{ steps.ver.outputs.code }}
         run: |
           HAP=$(ls -t src/dist/*-signed.hap | head -1)
-          gh release create "harmony-${VERSION}-${CODE}" "$HAP" \
-            --title "Atlantis Harmony ${VERSION} (${CODE})" \
-            --notes "Built from simtelboy/harmony-naive. Signed HAP for direct hdc installation."
+          python3 ci/scripts/publish_release.py "harmony-${VERSION}-${CODE}" "$HAP"
