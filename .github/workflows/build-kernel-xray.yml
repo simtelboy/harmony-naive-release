@@ -1,0 +1,100 @@
+name: Build Xray kernel
+
+# M2：Xray-core(MPL-2.0) → libxray.so(OHOS arm64 c-shared)。
+# 私有仓库的 Actions 受免费额度限制，所以内核构建放在这个公开仓库跑，
+# 源码仍从私有仓库检出。产物发布到本仓库的 `xray-kernel-latest` Release，
+# HAP 构建会从那里取 .so，避免把 50MB 二进制提交进仓库。
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: xray-kernel
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Build libxray.so (arm64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    container:
+      image: ghcr.io/dalongzhuazi/harmonyos-ci:api24
+    steps:
+      - name: Check out private source
+        uses: actions/checkout@v4
+        with:
+          repository: simtelboy/harmony-naive
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          path: src
+
+      - name: Check out release tooling
+        uses: actions/checkout@v4
+        with:
+          path: ci
+
+      - name: Cache OHOS Go toolchain
+        id: go-cache
+        uses: actions/cache@v4
+        with:
+          path: /github/home/go1.27.1-ohos
+          key: go-ohos-1.27.1
+
+      - name: Install OHOS Go toolchain
+        if: ${{ steps.go-cache.outputs.cache-hit != 'true' }}
+        run: |
+          set -eu
+          URL="https://github.com/sysit/ohos-go/releases/download/v1.27.1-ohos/go1.27.1-ohos-linux-amd64.tar.gz"
+          curl -fL --retry 3 --retry-delay 5 "$URL" -o /tmp/go-ohos.tar.gz
+          tar -xzf /tmp/go-ohos.tar.gz -C "$HOME"
+          "$HOME/go1.27.1-ohos/bin/go" version
+
+      - name: Add Go to PATH
+        run: |
+          set -eu
+          echo "$HOME/go1.27.1-ohos/bin" >> "$GITHUB_PATH"
+          "$HOME/go1.27.1-ohos/bin/go" version
+
+      - name: Cache Go modules & build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            /github/home/go/pkg/mod
+            /github/home/.cache/go-build
+          key: go-mod-xray-${{ hashFiles('src/core/libxray/go.sum') }}
+          restore-keys: |
+            go-mod-xray-
+
+      - name: Build libxray.so
+        env:
+          DEVECO_SDK_HOME: /opt/command-line-tools/sdk
+          OUT_SO: ${{ github.workspace }}/src/entry/libs/arm64-v8a/libxray.so
+        run: bash src/core/scripts/build-libxray-ohos-ci.sh
+
+      - name: Inspect artifact
+        run: |
+          set -eu
+          ls -lh src/entry/libs/arm64-v8a/libxray.so
+          file src/entry/libs/arm64-v8a/libxray.so || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libxray-ohos-arm64
+          path: src/entry/libs/arm64-v8a/libxray.so
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish rolling release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          python3 ci/scripts/publish_kernel_asset.py xray-kernel-latest \
+            src/entry/libs/arm64-v8a/libxray.so \
+            "libxray.so built from $(git -C src rev-parse --short HEAD) ($(date -u +%Y-%m-%dT%H:%MZ))"
