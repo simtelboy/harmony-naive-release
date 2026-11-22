@@ -33,18 +33,6 @@ jobs:
         with:
           path: ci
 
-      - name: Fetch optional Xray kernel
-        run: |
-          set -eu
-          mkdir -p src/entry/libs/arm64-v8a
-          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/xray-kernel-latest/libxray.so"
-          if curl -fL --retry 3 --retry-delay 5 "$URL" -o src/entry/libs/arm64-v8a/libxray.so; then
-            ls -lh src/entry/libs/arm64-v8a/libxray.so
-          else
-            echo "::warning::libxray.so not published yet; building without the Xray engine"
-            rm -f src/entry/libs/arm64-v8a/libxray.so
-          fi
-
       - name: Prepare CI workspace
         working-directory: src
         run: |
